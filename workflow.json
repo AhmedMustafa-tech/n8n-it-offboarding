@@ -1,0 +1,274 @@
+{
+  "name": "IT offboarding (JumpCloud + Google Workspace + Slack)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "offboard",
+        "options": {}
+      },
+      "name": "Webhook: offboard request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "6afda385-4d4c-48f4-a5c1-5fe6eaa2c08b",
+      "webhookId": "1531961a-c85d-41db-9150-feb8373aa0fa"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===== EDIT THESE =====\n// Safety first: DRY_RUN = true only REPORTS what would happen. Set to false when you are ready.\nconst input = $input.first().json.body || $input.first().json;\nreturn [{ json: {\n  DRY_RUN: true,\n  email: input.email,                 // leaver's work email\n  ticketKey: input.ticketKey || '',   // optional Jira ticket to comment on\n  jiraBaseUrl: 'https://YOUR-SITE.atlassian.net',\n  slackChannel: '#offboarding-log',\n}}];"
+      },
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "15526f2b-6259-4037-bbab-96e72e6c4f4b"
+    },
+    {
+      "parameters": {
+        "url": "=https://console.jumpcloud.com/api/systemusers",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filter",
+              "value": "=email:$eq:{{ $json.email }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.JUMPCLOUD_API_KEY }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "JumpCloud: find user",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "id": "d82f3238-4efc-4fa2-9577-ef5268720a91"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "6c243e7f-f4e3-4673-a717-4aa0df6377d8",
+              "leftValue": "={{ $('Config').first().json.DRY_RUN }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Live run?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "id": "4406988a-cf31-45a7-8a37-a72a1f17c2db"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://console.jumpcloud.com/api/systemusers/{{ $json.results[0].id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.JUMPCLOUD_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"suspended\": true}",
+        "options": {}
+      },
+      "name": "JumpCloud: suspend user",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        -120
+      ],
+      "id": "287c5bef-560e-4622-ace6-9a6ad836364c"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://admin.googleapis.com/admin/directory/v1/users/{{ $('Config').first().json.email }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"suspended\": true}",
+        "options": {}
+      },
+      "name": "Google Workspace: suspend user",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        -120
+      ],
+      "id": "7faa2725-061e-4547-b1f4-1ca256e28a9a"
+    },
+    {
+      "parameters": {
+        "jsCode": "const c = $('Config').first().json;\nconst jc = $('JumpCloud: find user').first().json;\nconst found = (jc.results || [])[0];\nconst lines = [\n  `${c.DRY_RUN ? ':test_tube: DRY RUN' : ':white_check_mark: Offboarding complete'} for ${c.email}`,\n  `\u2022 Google Workspace: ${c.DRY_RUN ? 'would suspend' : 'suspended'}`,\n  `\u2022 JumpCloud: ${found ? (c.DRY_RUN ? 'would suspend ' : 'suspended ') + found.username : 'user not found'}`,\n  '\u2022 Still manual: collect laptop, transfer Drive ownership, remove non-SSO tools',\n];\nreturn [{ json: { text: lines.join('\\n'), channel: c.slackChannel, ticketKey: c.ticketKey, jiraBaseUrl: c.jiraBaseUrl } }];"
+      },
+      "name": "Build summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ],
+      "id": "1d209d84-72c7-4ffa-950f-a37d41665e55"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $json.channel, text: $json.text }) }}",
+        "options": {}
+      },
+      "name": "Slack: post summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        0
+      ],
+      "id": "cb5897cf-e3f9-46b2-a516-4169537d1c3e"
+    }
+  ],
+  "connections": {
+    "Webhook: offboard request": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "JumpCloud: find user",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "JumpCloud: find user": {
+      "main": [
+        [
+          {
+            "node": "Live run?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Live run?": {
+      "main": [
+        [
+          {
+            "node": "JumpCloud: suspend user",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "JumpCloud: suspend user": {
+      "main": [
+        [
+          {
+            "node": "Google Workspace: suspend user",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Workspace: suspend user": {
+      "main": [
+        [
+          {
+            "node": "Build summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build summary": {
+      "main": [
+        [
+          {
+            "node": "Slack: post summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "active": false
+}
